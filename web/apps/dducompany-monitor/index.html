@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>뚜컴퍼니 모니터링</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">뚜</div>
+        <div>
+          <div class="title">뚜컴퍼니 모니터링</div>
+          <div class="subtitle" id="subtitle">로컬 상태(목업) · 업데이트 대기중…</div>
+        </div>
+      </div>
+
+      <div class="top-actions">
+        <button class="chip" id="btnPause">일시중지</button>
+        <button class="chip" id="btnResume">재개</button>
+        <button class="chip" id="btnMock">Mock</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- Left panel -->
+      <section class="panel left">
+        <div class="panel-h">
+          <h2>상태</h2>
+          <span class="badge" id="sysBadge">RUNNING</span>
+        </div>
+
+        <div class="cards">
+          <div class="card">
+            <div class="card-k">진척도</div>
+            <div class="card-v" id="progressPct">0%</div>
+            <div class="bar"><div class="bar-fill" id="progressBar"></div></div>
+          </div>
+          <div class="card">
+            <div class="card-k">완성도</div>
+            <div class="card-v" id="completePct">0%</div>
+            <div class="bar"><div class="bar-fill" id="completeBar"></div></div>
+          </div>
+        </div>
+
+        <div class="panel-h" style="margin-top:14px">
+          <h2>직원</h2>
+          <span class="mini" id="workerCount">0명</span>
+        </div>
+        <ul class="list" id="workerList"></ul>
+
+        <div class="panel-h" style="margin-top:14px">
+          <h2>최근 내역</h2>
+          <span class="mini">최신 10개</span>
+        </div>
+        <ul class="timeline" id="timeline"></ul>
+      </section>
+
+      <!-- Center canvas -->
+      <section class="center">
+        <div class="canvas-wrap">
+          <div class="canvas-title">
+            <div>
+              <div class="canvas-h">직원들이 일하는 중…</div>
+              <div class="canvas-s">작업중인 직원은 반짝이고, 쉬는 직원은 느긋하게 걸어다녀요.</div>
+            </div>
+            <div class="legend">
+              <span class="dot working"></span> 작업중
+              <span class="dot idle"></span> 대기
+              <span class="dot paused"></span> 일시중지
+            </div>
+          </div>
+          <canvas id="world" width="860" height="520"></canvas>
+          <div class="hint">팁: 좌측 패널에서 직원 상태를 클릭하면, 캔버스에서 살짝 강조됩니다.</div>
+        </div>
+      </section>
+
+      <!-- Right chat -->
+      <section class="panel right">
+        <div class="panel-h">
+          <h2>채팅</h2>
+          <span class="mini" id="chatStatus">연결: 목업</span>
+        </div>
+
+        <div class="chat" id="chat"></div>
+
+        <div class="chat-input">
+          <input id="chatText" type="text" placeholder="메시지(목업). 실제 연결은 다음 단계에서 붙여요." />
+          <button id="chatSend">전송</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
+

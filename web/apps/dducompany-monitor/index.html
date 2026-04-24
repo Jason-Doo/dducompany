@@ -86,7 +86,9 @@
         <div class="chat" id="chat"></div>
 
         <div class="chat-input">
-          <input id="chatText" type="text" placeholder="메시지(목업). 실제 연결은 다음 단계에서 붙여요." />
+          <input id="chatText" type="text" placeholder="@ddu_chat_bot 으로 보낼 메시지" />
+          <input id="chatFile" type="file" accept="image/*" style="display:none" />
+          <button id="chatAttach" class="chip" title="이미지 첨부">📎</button>
           <button id="chatSend">전송</button>
         </div>
       </section>
@@ -95,4 +97,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-

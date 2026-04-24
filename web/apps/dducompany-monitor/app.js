@@ -1,22 +1,38 @@
-// DDUCompany Monitor (Mock-first)
+// DDUCompany Monitor (Live)
 
 const $ = (id) => document.getElementById(id);
 
+const API = {
+  health: '/api/health',
+  state: '/api/state',
+  workers: '/api/workers',
+  chatRead: (limit = 30) => `/api/chat/read?limit=${encodeURIComponent(limit)}`,
+  chatSend: '/api/chat/send',
+  chatSendMedia: '/api/chat/send-media'
+};
+
 const state = {
-  mode: 'mock',
   paused: false,
   selectedWorkerId: null,
   workers: [],
+  workerStats: [],
   events: [],
   progress: { progress_pct: 0, completeness_pct: 0 },
-  chat: []
+  summary: null,
+  queue: null,
+  chat: [],
+  lastChatSig: ''
 };
 
-function nowHHMM() {
-  const d = new Date();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${hh}:${mm}`;
+function fmtTs(ts) {
+  try {
+    const d = new Date(ts);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  } catch {
+    return String(ts || '');
+  }
 }
 
 function setBadge() {
@@ -31,39 +47,52 @@ function setBadge() {
 }
 
 function renderProgress() {
-  $('progressPct').textContent = `${state.progress.progress_pct || 0}%`;
-  $('completePct').textContent = `${state.progress.completeness_pct || 0}%`;
-  $('progressBar').style.width = `${state.progress.progress_pct || 0}%`;
-  $('completeBar').style.width = `${state.progress.completeness_pct || 0}%`;
+  const p = state.progress || {};
+  $('progressPct').textContent = `${p.progress_pct || 0}%`;
+  $('completePct').textContent = `${p.completeness_pct || 0}%`;
+  $('progressBar').style.width = `${p.progress_pct || 0}%`;
+  $('completeBar').style.width = `${p.completeness_pct || 0}%`;
 }
 
 function renderWorkers() {
-  $('workerCount').textContent = `${state.workers.length}명`;
+  const list = state.workers || [];
+  $('workerCount').textContent = `${list.length}명`;
   const ul = $('workerList');
   ul.innerHTML = '';
-  for (const w of state.workers) {
+
+  for (const w of list) {
     const li = document.createElement('li');
     li.dataset.id = w.id;
+
     const left = document.createElement('div');
     const name = document.createElement('div');
     name.className = 'w-name';
-    name.textContent = w.nickname;
+    name.textContent = w.nickname || w.name || w.id;
+
     const sub = document.createElement('div');
     sub.className = 'w-sub';
-    sub.textContent = w.current_job ? `작업: ${w.current_job}` : (w.status === 'working' ? '작업중' : '대기중');
+    const hb = w.last_heartbeat ? `HB ${fmtTs(w.last_heartbeat)}` : 'HB -';
+    const cpu = (w.latest && w.latest.cpu_usage != null) ? `CPU ${w.latest.cpu_usage}%` : '';
+    const mem = (w.latest && w.latest.memory_usage != null) ? `Mem ${w.latest.memory_usage}%` : '';
+    const model = (w.latest && w.latest.api_model) ? `${w.latest.api_model}` : '';
+    const job = w.current_job ? `작업: ${w.current_job}` : '';
+    sub.textContent = [job, hb, cpu, mem, model].filter(Boolean).join(' · ');
+
     left.appendChild(name);
     left.appendChild(sub);
 
     const pill = document.createElement('div');
     pill.className = `pill ${w.status}`;
-    pill.textContent = (w.status === 'working') ? '작업중' : '대기';
+    pill.textContent = (w.status === 'working' || w.status === 'online') ? '작업중/온라인' : (w.status || '대기');
 
     li.appendChild(left);
     li.appendChild(pill);
+
     li.addEventListener('click', () => {
       state.selectedWorkerId = w.id;
-      world.flash(w.id);
+      try { world.flash(w.id); } catch {}
     });
+
     ul.appendChild(li);
   }
 }
@@ -71,17 +100,21 @@ function renderWorkers() {
 function renderTimeline() {
   const ul = $('timeline');
   ul.innerHTML = '';
-  for (const e of state.events.slice(0, 10)) {
+  const items = (state.events || []).slice(0, 10);
+  for (const e of items) {
     const li = document.createElement('li');
     const dot = document.createElement('div');
     dot.className = 't-dot';
+
     const box = document.createElement('div');
     const msg = document.createElement('div');
     msg.className = 't-msg';
-    msg.textContent = e.msg;
+    msg.textContent = e.msg || e.type || JSON.stringify(e);
+
     const ts = document.createElement('div');
     ts.className = 't-ts';
-    ts.textContent = e.ts;
+    ts.textContent = fmtTs(e.ts || e.time || e.created_at || e.updated_at || e?.ts);
+
     box.appendChild(msg);
     box.appendChild(ts);
     li.appendChild(dot);
@@ -96,14 +129,33 @@ function renderChat() {
   for (const m of state.chat) {
     const b = document.createElement('div');
     b.className = `bubble ${m.me ? 'me' : ''}`;
+
     const meta = document.createElement('div');
     meta.className = 'meta';
     meta.textContent = `${m.from} · ${m.ts}`;
-    const txt = document.createElement('div');
-    txt.className = 'txt';
-    txt.textContent = m.text;
-    b.appendChild(meta);
-    b.appendChild(txt);
+
+    if (m.photo) {
+      const img = document.createElement('img');
+      img.src = m.photo;
+      img.style.maxWidth = '100%';
+      img.style.borderRadius = '10px';
+      img.style.marginTop = '6px';
+      b.appendChild(meta);
+      if (m.text) {
+        const txt = document.createElement('div');
+        txt.className = 'txt';
+        txt.textContent = m.text;
+        b.appendChild(txt);
+      }
+      b.appendChild(img);
+    } else {
+      const txt = document.createElement('div');
+      txt.className = 'txt';
+      txt.textContent = m.text;
+      b.appendChild(meta);
+      b.appendChild(txt);
+    }
+
     box.appendChild(b);
   }
   box.scrollTop = box.scrollHeight;
@@ -113,402 +165,310 @@ function setSubtitle(text) {
   $('subtitle').textContent = text;
 }
 
-// --- Mock data + tick ---
-function seedMock() {
-  state.workers = [
-    { id: 'worker_design_01', nickname: '디자인담당', status: 'idle', x: 0, y: 0 },
-    { id: 'worker_dev_01', nickname: '개발담당', status: 'working', current_job: 'web UI 패널 구조', x: 0, y: 0 },
-    { id: 'worker_sec_01', nickname: '보안담당', status: 'idle', x: 0, y: 0 },
-    { id: 'worker_test_01', nickname: '테스터', status: 'working', current_job: '체크리스트 작성', x: 0, y: 0 }
-  ];
-  state.events = [
-    { ts: nowHHMM(), msg: '중간관리자: 작업 분해 완료(디자인/개발/보안/테스트)' },
-    { ts: nowHHMM(), msg: '개발담당: 캔버스 아바타 애니메이션 1차 완료' },
-    { ts: nowHHMM(), msg: '테스터: UI 흐름 테스트 항목 생성' }
-  ];
-  state.chat = [
-    { from: '뚜봇', ts: nowHHMM(), text: '지금은 목업 채팅이에요. 다음 단계에서 텔레그램 브릿지 붙일게요.', me: false },
-    { from: '나', ts: nowHHMM(), text: '좋아. 진행 상황 계속 보여줘.', me: true }
-  ];
-  state.progress = { progress_pct: 38, completeness_pct: 22 };
+async function jfetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return await res.json();
 }
 
-function mockStep() {
-  if (state.paused) return;
-  // light progress drift
-  state.progress.progress_pct = Math.min(99, (state.progress.progress_pct || 0) + (Math.random() < 0.35 ? 1 : 0));
-  state.progress.completeness_pct = Math.min(99, (state.progress.completeness_pct || 0) + (Math.random() < 0.2 ? 1 : 0));
+function normalizeWorkersFromSupabase(workersJson, dduState) {
+  const workers = (workersJson?.workers || []).map(w => ({
+    id: w.id,
+    name: w.name,
+    nickname: w.name,
+    status: w.status || 'idle',
+    last_heartbeat: w.last_heartbeat,
+    latest: w.latest
+  }));
 
-  // random worker status toggles
-  for (const w of state.workers) {
-    if (Math.random() < 0.06) {
-      w.status = (w.status === 'working') ? 'idle' : 'working';
-      w.current_job = (w.status === 'working') ? pick([
-        '패널 UI 다듬기',
-        'DB 스냅샷 반영',
-        '채팅창 UI 정렬',
-        '버그 재현/수정'
-      ]) : null;
-      state.events.unshift({ ts: nowHHMM(), msg: `${w.nickname}: ${w.status === 'working' ? '작업 시작' : '작업 종료'}` });
-    }
+  // Try to decorate with current running job from local queue
+  const q = dduState?.queue;
+  const jobs = Array.isArray(q?.jobs) ? q.jobs : Array.isArray(q?.items) ? q.items : [];
+  const running = jobs.filter(j => (j.status === 'running' || j.status === 'in_progress'));
+
+  for (const w of workers) {
+    const mine = running.find(j => j.worker_id === w.id || j.worker === w.id || j.assigned_worker === w.id);
+    if (mine) w.current_job = mine.title || mine.name || mine.type || mine.id;
   }
-  state.events = state.events.slice(0, 50);
+
+  // Basic status mapping
+  for (const w of workers) {
+    if (w.current_job) w.status = 'working';
+  }
+
+  return workers;
 }
 
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+function normalizeEvents(dduState) {
+  const ev = dduState?.events || [];
+  // keep newest first
+  const out = [];
+  for (let i = ev.length - 1; i >= 0; i--) {
+    const e = ev[i] || {};
+    out.push({
+      ts: e.ts || e.time || e.created_at || e.updated_at || e?.ts || '',
+      msg: e.type ? `${e.type}${e.run_id ? ` (${String(e.run_id).slice(0, 6)})` : ''}` : (e.msg || e.message || e.raw || JSON.stringify(e).slice(0, 200))
+    });
+  }
+  return out.slice(0, 50);
 }
 
-// --- Canvas world (improved: pre-rendered background, richer actor animations) ---
+function computeProgress(dduState) {
+  const s = dduState?.summary || {};
+  const total = Number(s.jobs_total || 0);
+  const done = Number(s.jobs_done || 0);
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  const pTotal = Number(s.parents_total || 0);
+  const pDone = Number(s.parents_done || 0);
+  const pPct = pTotal > 0 ? Math.round((pDone / pTotal) * 100) : 0;
+
+  return { progress_pct: pct, completeness_pct: pPct };
+}
+
+function normalizeChatItems(items) {
+  // OpenClaw message read JSON varies; normalize best-effort.
+  const arr = Array.isArray(items) ? items : [];
+  const out = [];
+
+  for (const it of arr) {
+    const from = it.author?.name || it.author?.username || it.from || it.sender || (it.isFromMe ? '나' : '상대');
+    const ts = fmtTs(it.ts || it.date || it.createdAt || it.created_at || it.time);
+    const text = it.text || it.message || it.content || it.caption || '';
+    const me = Boolean(it.fromMe || it.isFromMe || it.me);
+    out.push({ from, ts, text, me, photo: it.photo || null });
+  }
+
+  return out.reverse();
+}
+
+async function refreshState() {
+  try {
+    const ddu = await jfetch(API.state);
+    const workersJson = await jfetch(API.workers);
+
+    state.summary = ddu.summary;
+    state.queue = ddu.queue;
+    state.events = normalizeEvents(ddu);
+    state.progress = computeProgress(ddu);
+    state.workers = normalizeWorkersFromSupabase(workersJson, ddu);
+
+    const sum = ddu.summary || {};
+    const subtitle = `DB+로컬 상태 · jobs ${sum.jobs_done || 0}/${sum.jobs_total || 0} · queued ${sum.jobs_queued || 0} · running ${sum.jobs_running || 0} · failed ${sum.jobs_failed || 0}`;
+    setSubtitle(subtitle);
+
+    $('chatStatus').textContent = '연결: Telegram(@ddu_chat_bot)';
+
+    setBadge();
+    renderProgress();
+    renderWorkers();
+    renderTimeline();
+
+    try { world.setWorkers(state.workers); } catch {}
+  } catch (e) {
+    setSubtitle(`연결 오류: ${e.message}`);
+  }
+}
+
+async function refreshChat() {
+  try {
+    const json = await jfetch(API.chatRead(30));
+    const items = json.items || [];
+    const sig = JSON.stringify(items.map(x => x.id || x.message_id || x.ts || x.date).slice(-10));
+    if (sig === state.lastChatSig) return;
+    state.lastChatSig = sig;
+    state.chat = normalizeChatItems(items);
+    renderChat();
+  } catch {
+    // ignore
+  }
+}
+
+async function sendChatText(text) {
+  await jfetch(API.chatSend, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+}
+
+async function sendChatMedia(file, caption) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('caption', caption || '');
+  const res = await fetch(API.chatSendMedia, { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+}
+
+// --- Canvas world: keep existing animation, but accept external workers ---
 const world = (() => {
   const canvas = $('world');
   const ctx = canvas.getContext('2d');
   const W = canvas.width;
   const H = canvas.height;
-  const pad = 26;
-
-  // offscreen background for performance
-  const bgCanvas = document.createElement('canvas');
-  bgCanvas.width = W; bgCanvas.height = H;
-  const bgCtx = bgCanvas.getContext('2d');
-
-  // seat anchors (approx positions in the mock layout)
-  const seats = [
-    { x: 160, y: H - 80 },
-    { x: 340, y: H - 80 },
-    { x: 520, y: H - 80 },
-    { x: 420, y: H - 160 }
-  ];
 
   const actors = new Map();
-  let last = performance.now();
+  let raf = null;
 
-  function preRenderBackground() {
-    const c = bgCtx;
-    // soft gradient floor
-    const g = c.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#fbfbff');
-    g.addColorStop(1, '#f3f5ff');
-    c.fillStyle = g; c.fillRect(0, 0, W, H);
-
-    // isometric tile pattern (subtle)
-    c.globalAlpha = 0.9;
-    const tileW = 80, tileH = 40;
-    for (let y = -tileH; y < H + tileH; y += tileH) {
-      for (let x = -tileW; x < W + tileW; x += tileW) {
-        const cx = x + (y / tileH) * (tileW / 2);
-        c.beginPath();
-        c.moveTo(cx, y + tileH / 2);
-        c.lineTo(cx + tileW / 2, y);
-        c.lineTo(cx + tileW, y + tileH / 2);
-        c.lineTo(cx + tileW / 2, y + tileH);
-        c.closePath();
-        c.fillStyle = (Math.floor((x + y) / tileW) % 2 === 0) ? '#f7f8fb' : '#f3f5ff';
-        c.fill();
-      }
-    }
-    c.globalAlpha = 1;
-
-    // desks
-    function drawDesk(x, y, w = 140, h = 60) {
-      c.save();
-      c.fillStyle = '#e8d9c5';
-      c.fillRect(x, y - h, w, h);
-      c.fillStyle = '#c9b193';
-      c.fillRect(x + 6, y - h + 6, w - 12, 12);
-      c.restore();
-    }
-  }
-
-  // helper: rounded rect
-  function roundRect(ctx2, x, y, w, h, r) {
-    const radius = r || 4;
-    ctx2.beginPath();
-    ctx2.moveTo(x + radius, y);
-    ctx2.arcTo(x + w, y, x + w, y + h, radius);
-    ctx2.arcTo(x + w, y + h, x, y + h, radius);
-    ctx2.arcTo(x, y + h, x, y, radius);
-    ctx2.arcTo(x, y, x + w, y, radius);
-    ctx2.closePath();
-  }
-
-  function initFromWorkers() {
+  function seed(workers) {
     actors.clear();
-    // pre-render background once
-    preRenderBackground();
-
     let i = 0;
-    for (const w of state.workers) {
-      const seat = seats[i % seats.length];
-      const px = seat.x + (Math.random() * 16 - 8);
-      const py = seat.y + (Math.random() * 8 - 4);
+    for (const w of workers) {
       actors.set(w.id, {
         id: w.id,
-        name: w.nickname,
+        name: w.nickname || w.name || w.id,
         status: w.status,
-        x: px,
-        y: py,
-        vx: 0,
-        vy: 0,
-        bob: Math.random() * Math.PI * 2,
-        flash: 0,
-        anim: { type: w.status === 'working' ? 'typing' : 'idle', t: 0 },
-        bubble: { text: null, since: 0, expiry: 0, width: 0, opacity: 0 }
+        x: 140 + (i % 4) * 160,
+        y: 160 + Math.floor(i / 4) * 120,
+        t: Math.random() * 10,
+        flashUntil: 0
       });
       i++;
     }
   }
 
-  function flash(id) {
-    const a = actors.get(id);
-    if (a) a.flash = 1;
-  }
-
-  function addBubble(a, text, duration = 2200) {
-    a.bubble.text = text;
-    a.bubble.since = Date.now();
-    a.bubble.expiry = Date.now() + duration;
-    ctx.font = '13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-    a.bubble.width = Math.min(280, 10 + ctx.measureText(text).width + 12);
-    a.bubble.opacity = 1;
-  }
-
-  function step(dt) {
-    // update actor states
-    for (const w of state.workers) {
-      const a = actors.get(w.id);
-      if (!a) continue;
-      // status transition: set animation type
-      if (w.status !== a.status) {
+  function setWorkers(workers) {
+    if (!workers) return;
+    // keep positions if already exists
+    const ids = new Set(workers.map(w => w.id));
+    for (const id of Array.from(actors.keys())) {
+      if (!ids.has(id)) actors.delete(id);
+    }
+    let i = 0;
+    for (const w of workers) {
+      if (!actors.has(w.id)) {
+        actors.set(w.id, {
+          id: w.id,
+          name: w.nickname || w.name || w.id,
+          status: w.status,
+          x: 140 + (i % 4) * 160,
+          y: 160 + Math.floor(i / 4) * 120,
+          t: Math.random() * 10,
+          flashUntil: 0
+        });
+      } else {
+        const a = actors.get(w.id);
         a.status = w.status;
-        a.anim.type = (a.status === 'working') ? 'typing' : 'idle';
-        a.anim.t = 0;
-        // show job bubble when moving to working
-        if (w.current_job) addBubble(a, w.current_job, 2800);
+        a.name = w.nickname || w.name || w.id;
       }
-      // periodic random idle actions
-      if (a.anim.type === 'idle' && Math.random() < 0.005) {
-        // occasionally sip coffee or snack
-        const action = Math.random() < 0.5 ? 'coffee' : 'snack';
-        a.anim.type = action; a.anim.t = 0;
-        addBubble(a, action === 'coffee' ? '커피 마시는 중...' : '간식 먹는 중...', 2600);
-      }
-
-      // update animation timers
-      a.anim.t += dt;
-      a.bob += dt * 3;
-
-      // walking animation (simple wandering) if set
-      if (a.anim.type === 'walk') {
-        a.vx += (Math.random() * 2 - 1) * 40 * dt;
-        a.vy += (Math.random() * 2 - 1) * 40 * dt;
-        a.x += a.vx * dt; a.y += a.vy * dt;
-      }
-
-      // damping + bounds
-      a.vx *= 0.93; a.vy *= 0.93;
-      if (a.x < pad) a.x = pad;
-      if (a.x > W - pad) a.x = W - pad;
-      if (a.y < pad) a.y = pad;
-      if (a.y > H - pad) a.y = H - pad;
-
-      // bubble expiry handling
-      if (a.bubble.text) {
-        const now = Date.now();
-        if (now > a.bubble.expiry) {
-          // fade out
-          a.bubble.opacity = Math.max(0, a.bubble.opacity - dt * 2);
-          if (a.bubble.opacity <= 0.01) a.bubble.text = null;
-        }
-      }
-    }
-
-    // occasional random bubble for idle workers
-    if (Math.random() < 0.01) {
-      const idle = Array.from(actors.values()).filter(a => a.anim.type === 'idle');
-      if (idle.length) {
-        const a = idle[Math.floor(Math.random() * idle.length)];
-        if (!a.bubble.text) addBubble(a, pick(['휴식 중...', '코드 리뷰 중...', '회의 준비 중...']), 2400);
-      }
+      i++;
     }
   }
 
-  function draw() {
-    // draw background from buffer
+  function draw(ts) {
     ctx.clearRect(0, 0, W, H);
-    // ensure background exists
-    if (bgCanvas) ctx.drawImage(bgCanvas, 0, 0);
 
-    // decorative props (drawn on top of bg for clarity)
-    // simple desks
-    function drawDesk(x, y, w = 140, h = 60) {
-      ctx.save();
-      ctx.fillStyle = '#e8d9c5';
-      ctx.fillRect(x, y - h, w, h);
-      ctx.fillStyle = '#c9b193';
-      ctx.fillRect(x + 6, y - h + 6, w - 12, 12);
-      ctx.restore();
-    }
-    drawDesk(120, H - 70, 140, 60);
-    drawDesk(320, H - 70, 140, 60);
+    // background
+    ctx.fillStyle = '#f6f7ff';
+    ctx.fillRect(0, 0, W, H);
 
-    // printer
-    ctx.save(); ctx.fillStyle = '#eef2f6'; ctx.fillRect(W - 140, H - 90, 80, 60); ctx.fillStyle = '#d1d5db'; ctx.fillRect(W - 132, H - 78, 64, 12); ctx.restore();
+    // title
+    ctx.fillStyle = '#c7cbea';
+    ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto';
+    ctx.fillText('DDUCompany Office (Live)', 16, 22);
 
-    // draw actors
     for (const a of actors.values()) {
-      const bob = Math.sin(a.bob) * 3;
-      const bx = a.x; const by = a.y + bob;
+      a.t += 0.02;
+      const bob = Math.sin(a.t) * 2;
+
+      const working = a.status === 'working';
+      const paused = state.paused;
+      const now = Date.now();
+      const flashing = now < a.flashUntil;
 
       // shadow
-      ctx.save(); ctx.globalAlpha = 0.12; ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(bx, by + 20, 28, 11, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = '#2a2f55';
+      ctx.beginPath();
+      ctx.ellipse(a.x, a.y + 22, 18, 6, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
 
-      // body/limbs base
-      const isWorking = a.anim.type === 'typing' || a.anim.type === 'work';
-      const skin = '#ffe8c2';
-      const cloth = isWorking ? '#60a5fa' : '#a78bfa';
+      // body
+      ctx.beginPath();
+      ctx.fillStyle = paused ? '#cdd2e8' : (working ? '#6d7dff' : '#8ad3b4');
+      if (flashing) ctx.fillStyle = '#ffb74d';
+      ctx.arc(a.x, a.y + bob, 16, 0, Math.PI * 2);
+      ctx.fill();
 
-      // legs
-      ctx.save(); ctx.fillStyle = '#3f3f46'; ctx.fillRect(bx - 10, by + 8, 8, 12); ctx.fillRect(bx + 2, by + 8, 8, 12); ctx.restore();
-      // torso
-      ctx.save(); ctx.fillStyle = cloth; ctx.fillRect(bx - 15, by - 6, 30, 24); ctx.restore();
+      // eye
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.arc(a.x - 5, a.y - 3 + bob, 2, 0, Math.PI * 2);
+      ctx.arc(a.x + 5, a.y - 3 + bob, 2, 0, Math.PI * 2);
+      ctx.fill();
 
-      // head
-      ctx.save(); ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(bx, by - 18, 12, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-      // face
-      ctx.save(); ctx.fillStyle = '#1f2937'; ctx.beginPath(); ctx.arc(bx - 5, by - 20, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(bx + 5, by - 20, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(31,41,55,0.7)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(bx, by - 12, 4, 0, Math.PI); ctx.stroke(); ctx.restore();
-
-      // simple arm/hand animations (typing vs coffee)
-      ctx.save();
-      if (a.anim.type === 'coffee') {
-        // coffee sip: rotate arm up and draw cup
-        const t = (a.anim.t % 1) * Math.PI * 2;
-        const ang = Math.sin(t) * 0.9 - 0.6;
-        // arm
-        ctx.translate(bx + 10, by - 6);
-        ctx.rotate(ang);
-        ctx.fillStyle = '#c69c6d';
-        ctx.fillRect(0, -4, 18, 8);
-        // cup
-        ctx.fillStyle = '#ffffff'; ctx.fillRect(18, -6, 10, 10); ctx.fillStyle = '#6b4f3b'; ctx.fillRect(20, -4, 6, 6);
-        ctx.restore();
-      } else if (a.anim.type === 'typing') {
-        const t2 = (a.anim.t * 6) % 2;
-        const ang = Math.sin(a.anim.t * 10) * 0.2;
-        ctx.translate(bx - 8, by - 2);
-        ctx.rotate(ang);
-        ctx.fillStyle = '#c69c6d'; ctx.fillRect(0, -4, 16, 8);
-        ctx.restore();
-        // second arm
-        ctx.save(); ctx.translate(bx + 6, by - 2); ctx.rotate(-ang*0.6); ctx.fillStyle = '#c69c6d'; ctx.fillRect(0, -4, 16, 8); ctx.restore();
-      } else {
-        // idle arm
-        ctx.fillStyle = '#c69c6d'; ctx.fillRect(bx - 22, by - 6, 12, 6); ctx.fillRect(bx + 10, by - 6, 12, 6);
-        ctx.restore();
-      }
-
-      // nameplate
-      ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(17,24,39,.78)'; ctx.fillText(a.name, bx, by + 44);
-
-      // speech bubble (stable rendering, fade)
-      if (a.bubble.text) {
-        const now = Date.now();
-        const bx2 = bx;
-        const by2 = by - 46;
-        // fade handling already managed in step()
-        ctx.save(); ctx.globalAlpha = Math.max(0.1, a.bubble.opacity || 1);
-        ctx.fillStyle = 'white'; ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;
-        const bw = a.bubble.width || Math.min(260, 10 + ctx.measureText(a.bubble.text).width + 12);
-        const bh = 28;
-        roundRect(ctx, bx2 - bw / 2, by2 - bh, bw, bh, 8); ctx.fill(); ctx.stroke();
-        // tail
-        ctx.beginPath(); ctx.moveTo(bx2 - 6, by2); ctx.lineTo(bx2 - 2, by2 + 8); ctx.lineTo(bx2 + 6, by2 + 2); ctx.closePath(); ctx.fill(); ctx.stroke();
-        // text
-        ctx.fillStyle = '#111827'; ctx.font = '13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(a.bubble.text, bx2, by2 - 6);
-        ctx.restore();
-      }
+      // label
+      ctx.fillStyle = '#2a2f55';
+      ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto';
+      ctx.textAlign = 'center';
+      ctx.fillText(a.name, a.x, a.y + 46);
     }
+
+    raf = requestAnimationFrame(draw);
   }
 
-  function loop(t) {
-    const dt = Math.min(0.033, (t - last) / 1000);
-    last = t;
-    step(dt);
-    draw();
-    requestAnimationFrame(loop);
+  function flash(id) {
+    const a = actors.get(id);
+    if (a) a.flashUntil = Date.now() + 1200;
   }
 
-  return {
-    initFromWorkers,
-    loop,
-    flash
-  };
+  function start() {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(draw);
+  }
+
+  // init
+  seed([]);
+  start();
+
+  return { setWorkers, flash };
 })();
 
-function refreshUI() {
-  setBadge();
-  renderProgress();
-  renderWorkers();
-  renderTimeline();
-  renderChat();
-  setSubtitle(`로컬 상태(목업) · ${state.paused ? '일시중지' : '실행중'} · ${nowHHMM()} 업데이트`);
-}
+function bindUI() {
+  $('btnPause').addEventListener('click', () => { state.paused = true; setBadge(); });
+  $('btnResume').addEventListener('click', () => { state.paused = false; setBadge(); });
+  $('btnMock').style.display = 'none';
 
-function bind() {
-  $('btnPause').addEventListener('click', () => {
-    state.paused = true;
-    state.events.unshift({ ts: nowHHMM(), msg: '시스템: 일시중지(목업)' });
-    refreshUI();
+  const fileEl = $('chatFile');
+  $('chatAttach').addEventListener('click', () => fileEl.click());
+
+  $('chatSend').addEventListener('click', async () => {
+    const text = $('chatText').value.trim();
+    const file = fileEl.files && fileEl.files[0];
+
+    try {
+      if (file) {
+        await sendChatMedia(file, text);
+        fileEl.value = '';
+        $('chatText').value = '';
+      } else {
+        if (!text) return;
+        await sendChatText(text);
+        $('chatText').value = '';
+      }
+      await refreshChat();
+    } catch (e) {
+      alert(`전송 실패: ${e.message}`);
+    }
   });
-  $('btnResume').addEventListener('click', () => {
-    state.paused = false;
-    state.events.unshift({ ts: nowHHMM(), msg: '시스템: 재개(목업)' });
-    refreshUI();
-  });
-  $('btnMock').addEventListener('click', () => {
-    state.mode = 'mock';
-    $('chatStatus').textContent = '연결: 목업';
-    state.events.unshift({ ts: nowHHMM(), msg: '모드: Mock' });
-    refreshUI();
-  });
-  $('chatSend').addEventListener('click', sendChat);
+
   $('chatText').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') sendChat();
+    if (e.key === 'Enter') $('chatSend').click();
   });
 }
 
-function sendChat() {
-  const input = $('chatText');
-  const text = (input.value || '').trim();
-  if (!text) return;
-  state.chat.push({ from: '나', ts: nowHHMM(), text, me: true });
-  input.value = '';
-  // mock bot reply
-  setTimeout(() => {
-    state.chat.push({ from: '뚜봇', ts: nowHHMM(), text: pick([
-      '확인했어요. 지금 처리중이에요.',
-      '좋아요. 다음 단계로 넘어갈게요.',
-      '현재 상태를 업데이트했어요.'
-    ]), me: false });
-    refreshUI();
-  }, 450);
-  refreshUI();
+async function boot() {
+  setSubtitle('연결 중…');
+  bindUI();
+
+  // initial
+  await refreshState();
+  await refreshChat();
+
+  // polling
+  setInterval(refreshState, 2500);
+  setInterval(refreshChat, 3000);
 }
 
-// TODO (Live mode):
-// - Read ddu_worker_runtime, ddu_jobs, ddu_events, ddu_project_snapshots from Supabase (read-only)
-// - Chat panel: bridge Telegram via server-side (never expose bot token in browser)
-
-function main() {
-  seedMock();
-  bind();
-  refreshUI();
-  world.initFromWorkers();
-  requestAnimationFrame(world.loop);
-  setInterval(() => {
-    mockStep();
-    refreshUI();
-  }, 1600);
-}
-
-main();
+boot();

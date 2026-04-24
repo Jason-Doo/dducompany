@@ -159,7 +159,7 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-// --- Canvas world ---
+// --- Canvas world (improved: pre-rendered background, richer actor animations) ---
 const world = (() => {
   const canvas = $('world');
   const ctx = canvas.getContext('2d');
@@ -167,23 +167,95 @@ const world = (() => {
   const H = canvas.height;
   const pad = 26;
 
+  // offscreen background for performance
+  const bgCanvas = document.createElement('canvas');
+  bgCanvas.width = W; bgCanvas.height = H;
+  const bgCtx = bgCanvas.getContext('2d');
+
+  // seat anchors (approx positions in the mock layout)
+  const seats = [
+    { x: 160, y: H - 80 },
+    { x: 340, y: H - 80 },
+    { x: 520, y: H - 80 },
+    { x: 420, y: H - 160 }
+  ];
+
   const actors = new Map();
   let last = performance.now();
 
+  function preRenderBackground() {
+    const c = bgCtx;
+    // soft gradient floor
+    const g = c.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#fbfbff');
+    g.addColorStop(1, '#f3f5ff');
+    c.fillStyle = g; c.fillRect(0, 0, W, H);
+
+    // isometric tile pattern (subtle)
+    c.globalAlpha = 0.9;
+    const tileW = 80, tileH = 40;
+    for (let y = -tileH; y < H + tileH; y += tileH) {
+      for (let x = -tileW; x < W + tileW; x += tileW) {
+        const cx = x + (y / tileH) * (tileW / 2);
+        c.beginPath();
+        c.moveTo(cx, y + tileH / 2);
+        c.lineTo(cx + tileW / 2, y);
+        c.lineTo(cx + tileW, y + tileH / 2);
+        c.lineTo(cx + tileW / 2, y + tileH);
+        c.closePath();
+        c.fillStyle = (Math.floor((x + y) / tileW) % 2 === 0) ? '#f7f8fb' : '#f3f5ff';
+        c.fill();
+      }
+    }
+    c.globalAlpha = 1;
+
+    // desks
+    function drawDesk(x, y, w = 140, h = 60) {
+      c.save();
+      c.fillStyle = '#e8d9c5';
+      c.fillRect(x, y - h, w, h);
+      c.fillStyle = '#c9b193';
+      c.fillRect(x + 6, y - h + 6, w - 12, 12);
+      c.restore();
+    }
+  }
+
+  // helper: rounded rect
+  function roundRect(ctx2, x, y, w, h, r) {
+    const radius = r || 4;
+    ctx2.beginPath();
+    ctx2.moveTo(x + radius, y);
+    ctx2.arcTo(x + w, y, x + w, y + h, radius);
+    ctx2.arcTo(x + w, y + h, x, y + h, radius);
+    ctx2.arcTo(x, y + h, x, y, radius);
+    ctx2.arcTo(x, y, x + w, y, radius);
+    ctx2.closePath();
+  }
+
   function initFromWorkers() {
     actors.clear();
+    // pre-render background once
+    preRenderBackground();
+
+    let i = 0;
     for (const w of state.workers) {
+      const seat = seats[i % seats.length];
+      const px = seat.x + (Math.random() * 16 - 8);
+      const py = seat.y + (Math.random() * 8 - 4);
       actors.set(w.id, {
         id: w.id,
         name: w.nickname,
         status: w.status,
-        x: pad + Math.random() * (W - pad * 2),
-        y: pad + Math.random() * (H - pad * 2),
-        vx: (Math.random() * 2 - 1) * 40,
-        vy: (Math.random() * 2 - 1) * 40,
+        x: px,
+        y: py,
+        vx: 0,
+        vy: 0,
         bob: Math.random() * Math.PI * 2,
-        flash: 0
+        flash: 0,
+        anim: { type: w.status === 'working' ? 'typing' : 'idle', t: 0 },
+        bubble: { text: null, since: 0, expiry: 0, width: 0, opacity: 0 }
       });
+      i++;
     }
   }
 
@@ -192,183 +264,169 @@ const world = (() => {
     if (a) a.flash = 1;
   }
 
+  function addBubble(a, text, duration = 2200) {
+    a.bubble.text = text;
+    a.bubble.since = Date.now();
+    a.bubble.expiry = Date.now() + duration;
+    ctx.font = '13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+    a.bubble.width = Math.min(280, 10 + ctx.measureText(text).width + 12);
+    a.bubble.opacity = 1;
+  }
+
   function step(dt) {
+    // update actor states
     for (const w of state.workers) {
       const a = actors.get(w.id);
       if (!a) continue;
-      a.status = w.status;
-    }
-    for (const a of actors.values()) {
-      const speed = (a.status === 'working') ? 1.2 : 0.8;
-      if (state.paused) {
-        a.vx *= 0.92;
-        a.vy *= 0.92;
-      } else {
-        // gentle wandering
-        a.vx += (Math.random() * 2 - 1) * 12 * dt;
-        a.vy += (Math.random() * 2 - 1) * 12 * dt;
+      // status transition: set animation type
+      if (w.status !== a.status) {
+        a.status = w.status;
+        a.anim.type = (a.status === 'working') ? 'typing' : 'idle';
+        a.anim.t = 0;
+        // show job bubble when moving to working
+        if (w.current_job) addBubble(a, w.current_job, 2800);
       }
-      a.x += a.vx * dt * speed;
-      a.y += a.vy * dt * speed;
+      // periodic random idle actions
+      if (a.anim.type === 'idle' && Math.random() < 0.005) {
+        // occasionally sip coffee or snack
+        const action = Math.random() < 0.5 ? 'coffee' : 'snack';
+        a.anim.type = action; a.anim.t = 0;
+        addBubble(a, action === 'coffee' ? '커피 마시는 중...' : '간식 먹는 중...', 2600);
+      }
+
+      // update animation timers
+      a.anim.t += dt;
       a.bob += dt * 3;
 
-      // bounds
-      if (a.x < pad) { a.x = pad; a.vx *= -0.7; }
-      if (a.x > W - pad) { a.x = W - pad; a.vx *= -0.7; }
-      if (a.y < pad) { a.y = pad; a.vy *= -0.7; }
-      if (a.y > H - pad) { a.y = H - pad; a.vy *= -0.7; }
+      // walking animation (simple wandering) if set
+      if (a.anim.type === 'walk') {
+        a.vx += (Math.random() * 2 - 1) * 40 * dt;
+        a.vy += (Math.random() * 2 - 1) * 40 * dt;
+        a.x += a.vx * dt; a.y += a.vy * dt;
+      }
 
-      // damping
-      a.vx *= 0.985;
-      a.vy *= 0.985;
-      a.flash *= 0.92;
+      // damping + bounds
+      a.vx *= 0.93; a.vy *= 0.93;
+      if (a.x < pad) a.x = pad;
+      if (a.x > W - pad) a.x = W - pad;
+      if (a.y < pad) a.y = pad;
+      if (a.y > H - pad) a.y = H - pad;
+
+      // bubble expiry handling
+      if (a.bubble.text) {
+        const now = Date.now();
+        if (now > a.bubble.expiry) {
+          // fade out
+          a.bubble.opacity = Math.max(0, a.bubble.opacity - dt * 2);
+          if (a.bubble.opacity <= 0.01) a.bubble.text = null;
+        }
+      }
+    }
+
+    // occasional random bubble for idle workers
+    if (Math.random() < 0.01) {
+      const idle = Array.from(actors.values()).filter(a => a.anim.type === 'idle');
+      if (idle.length) {
+        const a = idle[Math.floor(Math.random() * idle.length)];
+        if (!a.bubble.text) addBubble(a, pick(['휴식 중...', '코드 리뷰 중...', '회의 준비 중...']), 2400);
+      }
     }
   }
 
   function draw() {
+    // draw background from buffer
     ctx.clearRect(0, 0, W, H);
+    // ensure background exists
+    if (bgCanvas) ctx.drawImage(bgCanvas, 0, 0);
 
-    // isometric-ish floor (simple diamond tiles)
-    ctx.save();
-    ctx.fillStyle = '#f3f4f6';
-    ctx.fillRect(0, 0, W, H);
-    const tileW = 80;
-    const tileH = 40;
-    ctx.globalAlpha = 0.9;
-    for (let y = -tileH; y < H + tileH; y += tileH) {
-      for (let x = -tileW; x < W + tileW; x += tileW) {
-        const cx = x + (y / tileH) * (tileW / 2);
-        ctx.beginPath();
-        ctx.moveTo(cx, y + tileH / 2);
-        ctx.lineTo(cx + tileW / 2, y);
-        ctx.lineTo(cx + tileW, y + tileH / 2);
-        ctx.lineTo(cx + tileW / 2, y + tileH);
-        ctx.closePath();
-        ctx.fillStyle = (Math.floor((x + y) / tileW) % 2 === 0) ? '#eef2ff' : '#f8fafc';
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,0.03)';
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-
-    // simple office props (desks/printer) - anchored to bottom-left area
-    function drawDesk(x, y, w = 120, h = 60) {
+    // decorative props (drawn on top of bg for clarity)
+    // simple desks
+    function drawDesk(x, y, w = 140, h = 60) {
       ctx.save();
-      ctx.fillStyle = '#e0d7c6';
+      ctx.fillStyle = '#e8d9c5';
       ctx.fillRect(x, y - h, w, h);
-      ctx.fillStyle = '#b89f7b';
+      ctx.fillStyle = '#c9b193';
       ctx.fillRect(x + 6, y - h + 6, w - 12, 12);
       ctx.restore();
     }
-    drawDesk(120, H - 60, 140, 60);
-    drawDesk(320, H - 60, 140, 60);
-    // printer
-    ctx.save();
-    ctx.fillStyle = '#f3f4f6';
-    ctx.fillRect(W - 140, H - 90, 80, 60);
-    ctx.fillStyle = '#d1d5db';
-    ctx.fillRect(W - 132, H - 78, 64, 12);
-    ctx.restore();
+    drawDesk(120, H - 70, 140, 60);
+    drawDesk(320, H - 70, 140, 60);
 
-    // actors (isometric chibi characters with speech bubbles)
+    // printer
+    ctx.save(); ctx.fillStyle = '#eef2f6'; ctx.fillRect(W - 140, H - 90, 80, 60); ctx.fillStyle = '#d1d5db'; ctx.fillRect(W - 132, H - 78, 64, 12); ctx.restore();
+
+    // draw actors
     for (const a of actors.values()) {
       const bob = Math.sin(a.bob) * 3;
-      const baseX = a.x;
-      const baseY = a.y + bob;
+      const bx = a.x; const by = a.y + bob;
 
       // shadow
-      ctx.save();
-      ctx.beginPath();
-      ctx.ellipse(baseX, baseY + 18, 26, 10, 0, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(0,0,0,0.12)';
-      ctx.fill();
-      ctx.restore();
+      ctx.save(); ctx.globalAlpha = 0.12; ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(bx, by + 20, 28, 11, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
 
-      // body
-      const isWorking = a.status === 'working';
-      const bodyColor = isWorking ? '#60a5fa' : '#a78bfa';
-      ctx.save();
+      // body/limbs base
+      const isWorking = a.anim.type === 'typing' || a.anim.type === 'work';
+      const skin = '#ffe8c2';
+      const cloth = isWorking ? '#60a5fa' : '#a78bfa';
+
       // legs
-      ctx.fillStyle = '#3f3f46';
-      ctx.fillRect(baseX - 10, baseY + 8, 8, 12);
-      ctx.fillRect(baseX + 2, baseY + 8, 8, 12);
+      ctx.save(); ctx.fillStyle = '#3f3f46'; ctx.fillRect(bx - 10, by + 8, 8, 12); ctx.fillRect(bx + 2, by + 8, 8, 12); ctx.restore();
       // torso
-      ctx.fillStyle = bodyColor;
-      ctx.fillRect(baseX - 14, baseY - 6, 28, 22);
-      // head
-      ctx.fillStyle = '#ffe8c2';
-      ctx.beginPath();
-      ctx.arc(baseX, baseY - 14, 12, 0, Math.PI * 2);
-      ctx.fill();
-      // face (eyes)
-      ctx.fillStyle = '#1f2937';
-      ctx.beginPath(); ctx.arc(baseX - 5, baseY - 16, 2.2, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(baseX + 5, baseY - 16, 2.2, 0, Math.PI * 2); ctx.fill();
-      // smile
-      ctx.strokeStyle = 'rgba(31,41,55,0.7)'; ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.arc(baseX, baseY - 10, 4, 0, Math.PI); ctx.stroke();
-      ctx.restore();
+      ctx.save(); ctx.fillStyle = cloth; ctx.fillRect(bx - 15, by - 6, 30, 24); ctx.restore();
 
-      // subtle working glow
-      if (isWorking && !state.paused) {
-        ctx.save();
-        ctx.globalAlpha = 0.16 + 0.08 * Math.sin(a.bob * 3);
-        ctx.fillStyle = '#34d399';
-        ctx.beginPath(); ctx.ellipse(baseX, baseY + 2, 38, 14, 0, 0, Math.PI * 2); ctx.fill();
+      // head
+      ctx.save(); ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(bx, by - 18, 12, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      // face
+      ctx.save(); ctx.fillStyle = '#1f2937'; ctx.beginPath(); ctx.arc(bx - 5, by - 20, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(bx + 5, by - 20, 2.2, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = 'rgba(31,41,55,0.7)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(bx, by - 12, 4, 0, Math.PI); ctx.stroke(); ctx.restore();
+
+      // simple arm/hand animations (typing vs coffee)
+      ctx.save();
+      if (a.anim.type === 'coffee') {
+        // coffee sip: rotate arm up and draw cup
+        const t = (a.anim.t % 1) * Math.PI * 2;
+        const ang = Math.sin(t) * 0.9 - 0.6;
+        // arm
+        ctx.translate(bx + 10, by - 6);
+        ctx.rotate(ang);
+        ctx.fillStyle = '#c69c6d';
+        ctx.fillRect(0, -4, 18, 8);
+        // cup
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(18, -6, 10, 10); ctx.fillStyle = '#6b4f3b'; ctx.fillRect(20, -4, 6, 6);
+        ctx.restore();
+      } else if (a.anim.type === 'typing') {
+        const t2 = (a.anim.t * 6) % 2;
+        const ang = Math.sin(a.anim.t * 10) * 0.2;
+        ctx.translate(bx - 8, by - 2);
+        ctx.rotate(ang);
+        ctx.fillStyle = '#c69c6d'; ctx.fillRect(0, -4, 16, 8);
+        ctx.restore();
+        // second arm
+        ctx.save(); ctx.translate(bx + 6, by - 2); ctx.rotate(-ang*0.6); ctx.fillStyle = '#c69c6d'; ctx.fillRect(0, -4, 16, 8); ctx.restore();
+      } else {
+        // idle arm
+        ctx.fillStyle = '#c69c6d'; ctx.fillRect(bx - 22, by - 6, 12, 6); ctx.fillRect(bx + 10, by - 6, 12, 6);
         ctx.restore();
       }
 
       // nameplate
-      ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(17,24,39,.78)';
-      ctx.fillText(a.name, baseX, baseY + 44);
+      ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif'; ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(17,24,39,.78)'; ctx.fillText(a.name, bx, by + 44);
 
-      // speech bubble logic: show current job or a short status
-      let bubble = null;
-      if (a.status === 'working') bubble = (state.workers.find(w => w.id === a.id)?.current_job) || '작업 중...';
-      else if (a.status === 'idle' && Math.random() < 0.02) bubble = pick(['휴식 중...', '간식 먹는 중...', '문서 정리 중...']);
-
-      if (bubble) {
-        // draw bubble above head
-        const bx = baseX;
-        const by = baseY - 40 - (Math.sin(a.bob * 2) * 4);
-        // bubble rect
-        ctx.save();
-        ctx.fillStyle = 'white';
-        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
-        ctx.lineWidth = 1;
-        const bw = Math.min(220, 10 + ctx.measureText(bubble).width + 12);
-        const bh = 26;
-        ctx.beginPath();
-        roundRect(ctx, bx - bw/2, by - bh, bw, bh, 8);
-        ctx.fill(); ctx.stroke();
+      // speech bubble (stable rendering, fade)
+      if (a.bubble.text) {
+        const now = Date.now();
+        const bx2 = bx;
+        const by2 = by - 46;
+        // fade handling already managed in step()
+        ctx.save(); ctx.globalAlpha = Math.max(0.1, a.bubble.opacity || 1);
+        ctx.fillStyle = 'white'; ctx.strokeStyle = 'rgba(0,0,0,0.08)'; ctx.lineWidth = 1;
+        const bw = a.bubble.width || Math.min(260, 10 + ctx.measureText(a.bubble.text).width + 12);
+        const bh = 28;
+        roundRect(ctx, bx2 - bw / 2, by2 - bh, bw, bh, 8); ctx.fill(); ctx.stroke();
         // tail
-        ctx.beginPath();
-        ctx.moveTo(bx - 6, by);
-        ctx.lineTo(bx - 2, by + 8);
-        ctx.lineTo(bx + 6, by + 2);
-        ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(bx2 - 6, by2); ctx.lineTo(bx2 - 2, by2 + 8); ctx.lineTo(bx2 + 6, by2 + 2); ctx.closePath(); ctx.fill(); ctx.stroke();
         // text
-        ctx.fillStyle = '#111827';
-        ctx.font = '13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(bubble, bx, by - 6);
+        ctx.fillStyle = '#111827'; ctx.font = '13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif'; ctx.textAlign = 'center'; ctx.fillText(a.bubble.text, bx2, by2 - 6);
         ctx.restore();
       }
-    }
-
-    // helper: rounded rect
-    function roundRect(ctx, x, y, w, h, r) {
-      const radius = r || 4;
-      ctx.beginPath();
-      ctx.moveTo(x + radius, y);
-      ctx.arcTo(x + w, y, x + w, y + h, radius);
-      ctx.arcTo(x + w, y + h, x, y + h, radius);
-      ctx.arcTo(x, y + h, x, y, radius);
-      ctx.arcTo(x, y, x + w, y, radius);
-      ctx.closePath();
     }
   }
 

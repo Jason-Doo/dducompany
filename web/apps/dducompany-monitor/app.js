@@ -228,75 +228,147 @@ const world = (() => {
   function draw() {
     ctx.clearRect(0, 0, W, H);
 
-    // floor tiles
+    // isometric-ish floor (simple diamond tiles)
     ctx.save();
-    ctx.globalAlpha = 0.55;
-    ctx.strokeStyle = '#e9ecf6';
-    for (let x = 20; x < W; x += 40) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, H);
-      ctx.stroke();
-    }
-    for (let y = 20; y < H; y += 40) {
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(W, y);
-      ctx.stroke();
+    ctx.fillStyle = '#f3f4f6';
+    ctx.fillRect(0, 0, W, H);
+    const tileW = 80;
+    const tileH = 40;
+    ctx.globalAlpha = 0.9;
+    for (let y = -tileH; y < H + tileH; y += tileH) {
+      for (let x = -tileW; x < W + tileW; x += tileW) {
+        const cx = x + (y / tileH) * (tileW / 2);
+        ctx.beginPath();
+        ctx.moveTo(cx, y + tileH / 2);
+        ctx.lineTo(cx + tileW / 2, y);
+        ctx.lineTo(cx + tileW, y + tileH / 2);
+        ctx.lineTo(cx + tileW / 2, y + tileH);
+        ctx.closePath();
+        ctx.fillStyle = (Math.floor((x + y) / tileW) % 2 === 0) ? '#eef2ff' : '#f8fafc';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,0.03)';
+        ctx.stroke();
+      }
     }
     ctx.restore();
 
-    // actors
-    for (const a of actors.values()) {
-      const bob = Math.sin(a.bob) * 2;
-      const r = 18;
-      const isWorking = a.status === 'working';
-      const color = state.paused ? '#f59e0b' : (isWorking ? '#14b8a6' : '#c7cbd8');
+    // simple office props (desks/printer) - anchored to bottom-left area
+    function drawDesk(x, y, w = 120, h = 60) {
+      ctx.save();
+      ctx.fillStyle = '#e0d7c6';
+      ctx.fillRect(x, y - h, w, h);
+      ctx.fillStyle = '#b89f7b';
+      ctx.fillRect(x + 6, y - h + 6, w - 12, 12);
+      ctx.restore();
+    }
+    drawDesk(120, H - 60, 140, 60);
+    drawDesk(320, H - 60, 140, 60);
+    // printer
+    ctx.save();
+    ctx.fillStyle = '#f3f4f6';
+    ctx.fillRect(W - 140, H - 90, 80, 60);
+    ctx.fillStyle = '#d1d5db';
+    ctx.fillRect(W - 132, H - 78, 64, 12);
+    ctx.restore();
 
-      // glow
-      if (isWorking && !state.paused) {
-        ctx.save();
-        ctx.globalAlpha = 0.25 + 0.2 * Math.sin(a.bob * 2);
-        ctx.fillStyle = '#14b8a6';
-        ctx.beginPath();
-        ctx.arc(a.x, a.y + bob, r + 10, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-      if (a.flash > 0.05) {
-        ctx.save();
-        ctx.globalAlpha = 0.25 * a.flash;
-        ctx.strokeStyle = '#111827';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.arc(a.x, a.y + bob, r + 14, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-      }
+    // actors (isometric chibi characters with speech bubbles)
+    for (const a of actors.values()) {
+      const bob = Math.sin(a.bob) * 3;
+      const baseX = a.x;
+      const baseY = a.y + bob;
+
+      // shadow
+      ctx.save();
+      ctx.beginPath();
+      ctx.ellipse(baseX, baseY + 18, 26, 10, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.12)';
+      ctx.fill();
+      ctx.restore();
 
       // body
-      ctx.fillStyle = color;
+      const isWorking = a.status === 'working';
+      const bodyColor = isWorking ? '#60a5fa' : '#a78bfa';
+      ctx.save();
+      // legs
+      ctx.fillStyle = '#3f3f46';
+      ctx.fillRect(baseX - 10, baseY + 8, 8, 12);
+      ctx.fillRect(baseX + 2, baseY + 8, 8, 12);
+      // torso
+      ctx.fillStyle = bodyColor;
+      ctx.fillRect(baseX - 14, baseY - 6, 28, 22);
+      // head
+      ctx.fillStyle = '#ffe8c2';
       ctx.beginPath();
-      ctx.arc(a.x, a.y + bob, r, 0, Math.PI * 2);
+      ctx.arc(baseX, baseY - 14, 12, 0, Math.PI * 2);
       ctx.fill();
+      // face (eyes)
+      ctx.fillStyle = '#1f2937';
+      ctx.beginPath(); ctx.arc(baseX - 5, baseY - 16, 2.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(baseX + 5, baseY - 16, 2.2, 0, Math.PI * 2); ctx.fill();
+      // smile
+      ctx.strokeStyle = 'rgba(31,41,55,0.7)'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.arc(baseX, baseY - 10, 4, 0, Math.PI); ctx.stroke();
+      ctx.restore();
 
-      // face
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.arc(a.x - 6, a.y - 2 + bob, 3.2, 0, Math.PI * 2);
-      ctx.arc(a.x + 6, a.y - 2 + bob, 3.2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,.9)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(a.x, a.y + 6 + bob, 6, 0, Math.PI);
-      ctx.stroke();
+      // subtle working glow
+      if (isWorking && !state.paused) {
+        ctx.save();
+        ctx.globalAlpha = 0.16 + 0.08 * Math.sin(a.bob * 3);
+        ctx.fillStyle = '#34d399';
+        ctx.beginPath(); ctx.ellipse(baseX, baseY + 2, 38, 14, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
 
       // nameplate
       ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
       ctx.textAlign = 'center';
       ctx.fillStyle = 'rgba(17,24,39,.78)';
-      ctx.fillText(a.name, a.x, a.y + 36 + bob);
+      ctx.fillText(a.name, baseX, baseY + 44);
+
+      // speech bubble logic: show current job or a short status
+      let bubble = null;
+      if (a.status === 'working') bubble = (state.workers.find(w => w.id === a.id)?.current_job) || '작업 중...';
+      else if (a.status === 'idle' && Math.random() < 0.02) bubble = pick(['휴식 중...', '간식 먹는 중...', '문서 정리 중...']);
+
+      if (bubble) {
+        // draw bubble above head
+        const bx = baseX;
+        const by = baseY - 40 - (Math.sin(a.bob * 2) * 4);
+        // bubble rect
+        ctx.save();
+        ctx.fillStyle = 'white';
+        ctx.strokeStyle = 'rgba(0,0,0,0.08)';
+        ctx.lineWidth = 1;
+        const bw = Math.min(220, 10 + ctx.measureText(bubble).width + 12);
+        const bh = 26;
+        ctx.beginPath();
+        roundRect(ctx, bx - bw/2, by - bh, bw, bh, 8);
+        ctx.fill(); ctx.stroke();
+        // tail
+        ctx.beginPath();
+        ctx.moveTo(bx - 6, by);
+        ctx.lineTo(bx - 2, by + 8);
+        ctx.lineTo(bx + 6, by + 2);
+        ctx.fill(); ctx.stroke();
+        // text
+        ctx.fillStyle = '#111827';
+        ctx.font = '13px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(bubble, bx, by - 6);
+        ctx.restore();
+      }
+    }
+
+    // helper: rounded rect
+    function roundRect(ctx, x, y, w, h, r) {
+      const radius = r || 4;
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+      ctx.arcTo(x + w, y, x + w, y + h, radius);
+      ctx.arcTo(x + w, y + h, x, y + h, radius);
+      ctx.arcTo(x, y + h, x, y, radius);
+      ctx.arcTo(x, y, x + w, y, radius);
+      ctx.closePath();
     }
   }
 
@@ -382,4 +454,3 @@ function main() {
 }
 
 main();
-

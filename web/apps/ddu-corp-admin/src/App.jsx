@@ -1,6 +1,18 @@
 import { NavLink, Route, Routes } from 'react-router-dom'
 import './app.css'
 
+function MobileNav() {
+  return (
+    <nav className="mobileNav" aria-label="Primary">
+      <NavLink className={({ isActive }) => `mobileNav__item ${isActive ? 'is-active' : ''}`} to="/">홈</NavLink>
+      <NavLink className={({ isActive }) => `mobileNav__item ${isActive ? 'is-active' : ''}`} to="/jobs">Jobs</NavLink>
+      <NavLink className={({ isActive }) => `mobileNav__item ${isActive ? 'is-active' : ''}`} to="/escalations">Esc</NavLink>
+      <NavLink className={({ isActive }) => `mobileNav__item ${isActive ? 'is-active' : ''}`} to="/telegram">TG</NavLink>
+      <NavLink className={({ isActive }) => `mobileNav__item ${isActive ? 'is-active' : ''}`} to="/settings">설정</NavLink>
+    </nav>
+  )
+}
+
 function Layout({ children }) {
   return (
     <div className="app">
@@ -39,6 +51,8 @@ function Layout({ children }) {
             <div className="pill">상태: Draft</div>
           </div>
         </header>
+
+        <MobileNav />
 
         <section className="content">{children}</section>
       </main>

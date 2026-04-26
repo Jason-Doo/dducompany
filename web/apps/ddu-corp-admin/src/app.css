@@ -56,7 +56,23 @@
 .topbar__right{display:flex; align-items:center; gap:10px}
 .pill{font-size:12px; color:var(--muted); padding:6px 10px; border:1px solid var(--line); border-radius:999px; background: rgba(255,255,255,.03)}
 
-.content{padding:22px; overflow:auto}
+.content{padding:22px; overflow:auto; flex: 1}
+
+.mobileNav{display:none}
+.mobileNav__item{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  padding:10px 10px;
+  font-size:12px;
+  color:var(--muted);
+  text-decoration:none;
+  border-bottom:1px solid var(--line);
+  border-right:1px solid var(--line);
+  background: rgba(255,255,255,.02);
+}
+.mobileNav__item.is-active{color:var(--text); background: rgba(124,92,255,.18)}
 .grid{display:grid; grid-template-columns: repeat(12, 1fr); gap:14px}
 .card{
   grid-column: span 6;
@@ -110,6 +126,6 @@
 
 @media (max-width: 960px){
   .sidebar{display:none}
+  .mobileNav{display:grid; grid-template-columns: repeat(5, 1fr); border-bottom:1px solid var(--line)}
   .card{grid-column: span 12}
 }
-

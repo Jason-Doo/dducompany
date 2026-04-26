@@ -175,8 +175,8 @@ export default function App() {
         <Route path="/escalations" element={<Escalations />} />
         <Route path="/telegram" element={<Telegram />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="*" element={<Dashboard />} />
       </Routes>
     </Layout>
   )
 }
-

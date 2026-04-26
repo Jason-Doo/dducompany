@@ -86,6 +86,11 @@
 .card__title h3{margin:0; font-size:14px; letter-spacing:-.1px}
 .tag{font-size:12px; color:var(--muted); padding:4px 8px; border:1px solid var(--line); border-radius:999px}
 .muted{color:var(--muted)}
+.notice{border:1px solid var(--line); border-radius:16px; padding:12px 12px; background: rgba(0,0,0,.10)}
+.notice__title{font-weight:900; margin-bottom:6px}
+.notice--warn{border-color: rgba(251,191,36,.45); background: rgba(251,191,36,.08)}
+.notice--danger{border-color: rgba(239,68,68,.45); background: rgba(239,68,68,.08)}
+.notice--info{border-color: rgba(124,92,255,.45); background: rgba(124,92,255,.08)}
 .kpi{display:flex; gap:12px; margin-top:12px; flex-wrap:wrap}
 .kpi__item{flex:1; min-width:160px; padding:12px; border-radius:14px; border:1px solid var(--line); background: rgba(0,0,0,.08)}
 .kpi__label{font-size:12px; color:var(--muted)}

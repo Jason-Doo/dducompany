@@ -1,5 +1,7 @@
 import { NavLink, Route, Routes } from 'react-router-dom'
 import './app.css'
+import { EnvHint, LoadingRow, Notice } from './components/Ui.jsx'
+import { useSupabaseQuery } from './hooks/useSupabaseQuery.js'
 
 function MobileNav() {
   return (
@@ -61,6 +63,15 @@ function Layout({ children }) {
 }
 
 function Dashboard() {
+  const runtime = useSupabaseQuery({
+    key: ['runtime'],
+    queryFn: async (sb) => {
+      const { data, error } = await sb.from('ddu_runtime').select('*').order('updated_at', { ascending: false }).limit(1)
+      if (error) throw error
+      return data?.[0] || null
+    },
+  })
+
   return (
     <div className="grid">
       <div className="card card--wide">
@@ -68,6 +79,13 @@ function Dashboard() {
           <h3>Office View (720×480)</h3>
           <span className="tag">v0 mock</span>
         </div>
+        <EnvHint />
+        {runtime.loading ? <LoadingRow label="runtime 조회중…" /> : null}
+        {runtime.error ? (
+          <Notice tone="warn" title="runtime 조회 실패">
+            <div className="mono">{String(runtime.error)}</div>
+          </Notice>
+        ) : null}
         <div className="office">
           <div className="office__canvas">
             <div className="office__placeholder">
@@ -111,18 +129,42 @@ function Dashboard() {
 }
 
 function Jobs() {
+  const jobs = useSupabaseQuery({
+    key: ['jobs'],
+    queryFn: async (sb) => {
+      const { data, error } = await sb
+        .from('ddu_jobs')
+        .select('id,title,worker_id,status,updated_at,created_at,job_type')
+        .order('updated_at', { ascending: false })
+        .limit(50)
+      if (error) throw error
+      return data || []
+    },
+  })
+
   return (
     <div className="grid">
       <div className="card card--wide">
         <div className="card__title"><h3>Jobs / Queue</h3><span className="tag">v0</span></div>
-        <div className="muted" style={{ marginTop: 8 }}>
-          다음 단계: supabase 연결해서 ddu_jobs / ddu_events / ddu_escalations를 실제로 조회.
-        </div>
+        <EnvHint />
+        {jobs.loading ? <LoadingRow label="ddu_jobs 조회중…" /> : null}
+        {jobs.error ? (
+          <Notice tone="warn" title="ddu_jobs 조회 실패">
+            <div className="mono">{String(jobs.error)}</div>
+          </Notice>
+        ) : null}
         <table className="table">
           <thead><tr><th>id</th><th>title</th><th>worker</th><th>status</th><th>updated</th></tr></thead>
           <tbody>
-            <tr><td className="mono">JOB-1201</td><td>ddu_jobs consume</td><td className="mono">worker-main</td><td><span className="status"><span className="dot dot--new"></span>running</span></td><td className="mono">2026-04-26 01:06</td></tr>
-            <tr><td className="mono">JOB-1199</td><td>rework: escalation resolve</td><td className="mono">worker-main</td><td><span className="status"><span className="dot dot--warn"></span>rework</span></td><td className="mono">2026-04-26 01:01</td></tr>
+            {(jobs.data || []).map((j) => (
+              <tr key={j.id}>
+                <td className="mono">{String(j.id).slice(0, 8)}</td>
+                <td>{j.title || j.job_type || '-'}</td>
+                <td className="mono">{j.worker_id || '-'}</td>
+                <td><span className="status"><span className="dot"></span>{j.status || '-'}</span></td>
+                <td className="mono">{(j.updated_at || j.created_at || '').replace('T', ' ').slice(0, 16)}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -131,18 +173,44 @@ function Jobs() {
 }
 
 function Escalations() {
+  const esc = useSupabaseQuery({
+    key: ['escalations'],
+    queryFn: async (sb) => {
+      const { data, error } = await sb
+        .from('ddu_escalations')
+        .select('id,status,question_ko,answer_ko,decision_required,created_at,answered_at')
+        .order('created_at', { ascending: false })
+        .limit(50)
+      if (error) throw error
+      return data || []
+    },
+  })
+
   return (
     <div className="grid">
       <div className="card card--wide">
         <div className="card__title"><h3>Escalations</h3><span className="tag">v0</span></div>
-        <div className="muted" style={{ marginTop: 8 }}>
-          질문을 대화로 흩뿌리지 않고, 여기로 “큐잉”해서 사용자 체크를 최소화.
-        </div>
+        <EnvHint />
+        {esc.loading ? <LoadingRow label="ddu_escalations 조회중…" /> : null}
+        {esc.error ? (
+          <Notice tone="warn" title="ddu_escalations 조회 실패">
+            <div className="mono">{String(esc.error)}</div>
+          </Notice>
+        ) : null}
         <table className="table">
-          <thead><tr><th>id</th><th>title</th><th>status</th><th>updated</th></tr></thead>
+          <thead><tr><th>id</th><th>question</th><th>status</th><th>updated</th></tr></thead>
           <tbody>
-            <tr><td className="mono">ESC-3001</td><td>외부 전송 허용 여부 확인 필요</td><td><span className="status"><span className="dot dot--new"></span>queued</span></td><td className="mono">2026-04-26 01:06</td></tr>
-            <tr><td className="mono">ESC-3000</td><td>요구사항 모호: UI 무드/톤</td><td><span className="status"><span className="dot dot--ok"></span>resolved</span></td><td className="mono">2026-04-25 23:58</td></tr>
+            {(esc.data || []).map((e) => (
+              <tr key={e.id}>
+                <td className="mono">{String(e.id).slice(0, 8)}</td>
+                <td style={{ maxWidth: 640 }}>
+                  <div style={{ fontWeight: 700 }}>{String(e.question_ko || '').slice(0, 120) || '-'}</div>
+                  {e.decision_required ? <div className="tag" style={{ marginTop: 8, display: 'inline-block' }}>decision_required</div> : null}
+                </td>
+                <td><span className="status"><span className="dot"></span>{e.status || '-'}</span></td>
+                <td className="mono">{(e.answered_at || e.created_at || '').replace('T', ' ').slice(0, 16)}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -155,10 +223,12 @@ function Telegram() {
     <div className="grid">
       <div className="card card--wide">
         <div className="card__title"><h3>Telegram Control</h3><span className="tag">drawer 예정</span></div>
-        <div className="muted" style={{ marginTop: 10, lineHeight: 1.5 }}>
-          PLAN 기준: 우측 Drawer + @ddu_chat_bot 송수신 + 파일 첨부.
-          <br />v0에서는 UI 프레임만 고정하고, 연결은 단계적으로 붙입니다.
-        </div>
+        <Notice tone="info" title="준비중">
+          Telegram 송수신/컨트롤은 다음 단계에서 붙입니다.
+          <div className="muted" style={{ marginTop: 6 }}>
+            (웹앱에서 텔레그램을 직접 제어하려면 별도 백엔드/서버리스 함수가 필요합니다)
+          </div>
+        </Notice>
       </div>
     </div>
   )

@@ -1,0 +1,78 @@
+name: pages-admin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/apps/ddu-corp-admin/**'
+      - '.github/workflows/pages-admin.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/apps/ddu-corp-admin/package-lock.json
+
+      - name: Install
+        working-directory: web/apps/ddu-corp-admin
+        run: npm ci
+
+      - name: Build (GitHub Pages)
+        working-directory: web/apps/ddu-corp-admin
+        env:
+          GITHUB_PAGES: 'true'
+        run: npm run build
+
+      - name: Prepare Pages artifact
+        run: |
+          mkdir -p public/admin
+          cp -R web/apps/ddu-corp-admin/dist/* public/admin/
+          cat > public/index.html <<'EOF'
+          <!doctype html>
+          <html>
+            <head>
+              <meta charset="utf-8" />
+              <meta http-equiv="refresh" content="0; url=./admin/" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>DDU COMPANY</title>
+            </head>
+            <body>
+              <p>Redirecting to <a href="./admin/">/admin</a>…</p>
+            </body>
+          </html>
+          EOF
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
+
